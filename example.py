@@ -17,6 +17,62 @@ import dnnlib
 
 #----------------------------------------------------------------------------
 
+def estimate_score(
+    network_pkl, dest_path,
+    seed=0, gridw=8, gridh=8, device=torch.device('cuda'),
+    num_steps=18, sigma_min=0.002, sigma_max=80, rho=7,
+    S_churn=0, S_min=0, S_max=float('inf'), S_noise=1,
+):
+    batch_size = gridw * gridh
+    torch.manual_seed(seed)
+
+    # Load network.
+    print(f'Loading network from "{network_pkl}"...')
+    with dnnlib.util.open_url(network_pkl) as f:
+        net = pickle.load(f)['ema'].to(device)
+
+    print("Network Supports Noise Level (Min/Max):", net.sigma_min, net.sigma_max)
+
+    # Pick latents and labels.
+    print(f'Generating {batch_size} images...')
+    latents = torch.randn([batch_size, net.img_channels, net.img_resolution, net.img_resolution], device=device)
+    class_labels = None
+    if net.label_dim:
+        class_labels = torch.eye(net.label_dim, device=device)[torch.randint(net.label_dim, size=[batch_size], device=device)]
+
+    # Main sampling loop. Langevin dynamics, i.e. sampling with noise level 0 only
+    N = 1000
+    x_next = latents.to(torch.float64)
+    for t in tqdm.tqdm(range(N)): # 0, ..., N-1
+        x_cur = x_next
+        epsilon_t = 1 / np.sqrt(N)
+        score = net(x_cur, torch.Tensor([0.]).to(device), class_labels).to(torch.float64)
+        z_i = torch.randn([batch_size, net.img_channels, net.img_resolution, net.img_resolution], device=device)
+        x_next = x_cur + epsilon_t * score + np.sqrt(2 * epsilon_t) * z_i
+
+    # Save image grid.
+    print(f'Saving image grid to "{dest_path}"...')
+    image = (x_next * 127.5 + 128).clip(0, 255).to(torch.uint8)
+    image = image.reshape(gridh, gridw, *image.shape[1:]).permute(0, 3, 1, 4, 2)
+    image = image.reshape(gridh * net.img_resolution, gridw * net.img_resolution, net.img_channels)
+    image = image.cpu().numpy()
+    PIL.Image.fromarray(image, 'RGB').save(dest_path)
+    print('Done.')
+        
+
+#----------------------------------------------------------------------------
+
+
+def save_image_grid(dest_path, x, gridh=8, gridw=8):
+    # Save image grid.
+    print(f'Saving image grid to "{dest_path}"...')
+    image = (x * 127.5 + 128).clip(0, 255).to(torch.uint8)
+    image = image.reshape(gridh, gridw, *image.shape[1:]).permute(0, 3, 1, 4, 2)
+    image = image.reshape(gridh * net.img_resolution, gridw * net.img_resolution, net.img_channels)
+    image = image.cpu().numpy()
+    PIL.Image.fromarray(image, 'RGB').save(dest_path)
+    print('Done.')
+
 def generate_image_grid(
     network_pkl, dest_path,
     seed=0, gridw=8, gridh=8, device=torch.device('cuda'),
@@ -54,13 +110,13 @@ def generate_image_grid(
 
         # Increase noise temporarily.
         gamma = min(S_churn / num_steps, np.sqrt(2) - 1) if S_min <= t_cur <= S_max else 0
-        t_hat = net.round_sigma(t_cur + gamma * t_cur)
-        x_hat = x_cur + (t_hat ** 2 - t_cur ** 2).sqrt() * S_noise * torch.randn_like(x_cur)
+        t_hat = net.round_sigma(t_cur + gamma * t_cur) # 5:
+        x_hat = x_cur + (t_hat ** 2 - t_cur ** 2).sqrt() * S_noise * torch.randn_like(x_cur)  # 6:
 
         # Euler step.
-        denoised = net(x_hat, t_hat, class_labels).to(torch.float64)
-        d_cur = (x_hat - denoised) / t_hat
-        x_next = x_hat + (t_next - t_hat) * d_cur
+        denoised = net(x_hat, t_hat, class_labels).to(torch.float64) # 7:
+        d_cur = (x_hat - denoised) / t_hat # 7:
+        x_next = x_hat + (t_next - t_hat) * d_cur # 8:
 
         # Apply 2nd order correction.
         if i < num_steps - 1:
@@ -81,11 +137,12 @@ def generate_image_grid(
 
 def main():
     model_root = 'https://nvlabs-fi-cdn.nvidia.com/edm/pretrained'
-    generate_image_grid(f'{model_root}/edm-cifar10-32x32-cond-vp.pkl',   'cifar10-32x32.png',  num_steps=18) # FID = 1.79, NFE = 35
-    generate_image_grid(f'{model_root}/edm-ffhq-64x64-uncond-vp.pkl',    'ffhq-64x64.png',     num_steps=40) # FID = 1.97, NFE = 79
-    generate_image_grid(f'{model_root}/edm-afhqv2-64x64-uncond-vp.pkl',  'afhqv2-64x64.png',   num_steps=40) # FID = 1.96, NFE = 79
-    generate_image_grid(f'{model_root}/edm-imagenet-64x64-cond-adm.pkl', 'imagenet-64x64.png', num_steps=256, S_churn=40, S_min=0.05, S_max=50, S_noise=1.003) # FID = 1.36, NFE = 511
+    #generate_image_grid(f'{model_root}/edm-cifar10-32x32-cond-vp.pkl',   'cifar10-32x32.png',  num_steps=18) # FID = 1.79, NFE = 35
+    #generate_image_grid(f'{model_root}/edm-ffhq-64x64-uncond-vp.pkl',    'ffhq-64x64.png',     num_steps=40) # FID = 1.97, NFE = 79
+    #generate_image_grid(f'{model_root}/edm-afhqv2-64x64-uncond-vp.pkl',  'afhqv2-64x64.png',   num_steps=40) # FID = 1.96, NFE = 79
+    #generate_image_grid(f'{model_root}/edm-imagenet-64x64-cond-adm.pkl', 'imagenet-64x64.png', num_steps=256, S_churn=40, S_min=0.05, S_max=50, S_noise=1.003) # FID = 1.36, NFE = 511
 
+    estimate_score(f'{model_root}/edm-cifar10-32x32-cond-vp.pkl',   'cifar10-32x32-langevin.png',  num_steps=18)
 #----------------------------------------------------------------------------
 
 if __name__ == "__main__":
