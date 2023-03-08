@@ -306,7 +306,7 @@ def main(**kwargs):
         c.network_kwargs.update(
             channel_mult_noise=1,
             resample_filter=[1, 1],
-            model_channels=opts.ddpmppcmodel,
+            model_channels=32,
             channel_mult=[2, 2, 2],
         )
     elif opts.arch == "ncsnpp":
@@ -319,14 +319,14 @@ def main(**kwargs):
         c.network_kwargs.update(
             channel_mult_noise=2,
             resample_filter=[1, 3, 3, 1],
-            model_channels=opts.ddpmppcmodel,
+            model_channels=32,
             channel_mult=[2, 2, 2],
         )
     else:
         assert opts.arch == "adm"
         c.network_kwargs.update(
             model_type="DhariwalUNet",
-            model_channels=opts.ddpmppcmodel,
+            model_channels=32,
             channel_mult=[1, 2, 3, 4],
         )
 
@@ -344,7 +344,7 @@ def main(**kwargs):
 
     # Network options.
     if opts.cbase is not None:
-        c.network_kwargs.model_channels = opts.cbase
+        c.network_kwargs.model_channels = 32
     if opts.cres is not None:
         c.network_kwargs.channel_mult = opts.cres
     if opts.augment:
